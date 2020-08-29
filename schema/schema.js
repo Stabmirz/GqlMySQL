@@ -44,7 +44,9 @@ const CompanyType = new GraphQLObjectType({
     address1: { type: GraphQLString },
     address2: { type: GraphQLString },
     city: { type: GraphQLString },
-    state: { type: GraphQLString },
+    lat: { type: GraphQLFloat},
+    lon: { type: GraphQLFloat },
+    distance:{ type: GraphQLFloat },
     zip: { type: GraphQLString },
     categoryid: { type: GraphQLID },
     descr: { type: GraphQLString },
@@ -55,6 +57,10 @@ const CompanyType = new GraphQLObjectType({
     suggested: { type: GraphQLInt },
     favorite: { type: GraphQLInt },
     approved: { type: GraphQLInt },
+    // selected cid as value and name as label in a query to show company name in dropdown
+    value: { type: GraphQLID },
+    label: { type: GraphQLString },
+    rank:{type: GraphQLInt},
     hours: {
       type: HoursType,
       resolve(parent, args) {
@@ -71,6 +77,12 @@ const CompanyType = new GraphQLObjectType({
       type: new GraphQLList(ReviewsType),
       resolve(parent, args) {
         return db.findReviewsById(parent.cid).then((value) => value[0]);
+      },
+    },
+    extReviews: {
+      type: new GraphQLList(ExtReviewsType),
+      resolve(parent, args) {
+        return db.findExtReviewsById(parent.cid).then((value) => value[0]);
       },
     },
     owner: {
@@ -95,12 +107,21 @@ const CategoryType = new GraphQLObjectType({
   fields: () => ({
     catid: { type: GraphQLID },
     name: { type: GraphQLString },
+    short_name: { type: GraphQLString },
     active: { type: GraphQLInt },
+    
+    // selected catid as value and short_name as label in a query
+    value: { type: GraphQLID },
+    label: { type: GraphQLString },
     companys: {
       type: new GraphQLList(CompanyType),
+      args:{
+        lat: { type: GraphQLFloat },
+        lon: { type: GraphQLFloat }
+      },
       resolve(parent, args) {
         return db
-          .findAllBusinessByCategory(parent.catid)
+          .findAllBusinessByCategory(parent.catid, args.lat, args.lon)
           .then((value) => value[0]);
       },
     },
@@ -184,14 +205,64 @@ const ReviewsType = new GraphQLObjectType({
           .then((value) => value[0]);
       },
     },
+    reply: {
+      type: ReplyType,
+      resolve(parent, args) {
+        return db
+          .findReply(parent.rid)
+          .then((value) => value[0]);
+      },
+    },
     company: {
       type: CompanyType,
       resolve(parent, args) {
         return db
-          .findAllBusinessByCategory(parent.cid)
+          .findBusinessByID(parent.cid)
           .then((value) => value[0]);
       },
     },
+  }),
+});
+
+const ReplyType = new GraphQLObjectType({
+  name: "Reply",
+  fields: () => ({
+    id: { type: GraphQLID },
+    rid: { type: GraphQLID },
+    comment: { type: GraphQLString },
+    active:{type:GraphQLInt},
+    date: { type: GraphQLString },
+  }),
+});
+
+const ExtReviewsType = new GraphQLObjectType({
+  name: "ExtReviews",
+  fields: () => ({
+    id: { type: GraphQLID },
+    cid: { type: GraphQLID },
+    rsi: { type: GraphQLID },
+    rating: { type: GraphQLID },
+    quantity: { type: GraphQLID },
+    date:{ type:GraphQLString },
+    source: {
+      type: ReviewSourceType,
+      resolve(parent, args) {
+        return db
+          .findReviewSourceByRSI(parent.rsi)
+          .then((value) => value[0]);
+      },
+    },
+  }),
+});
+
+
+const ReviewSourceType = new GraphQLObjectType({
+  name: "ReviewSource",
+  fields: () => ({
+    id: { type: GraphQLID },
+    name: { type: GraphQLString },
+    url: { type: GraphQLString },
+    logo: { type: GraphQLString },
   }),
 });
 
@@ -200,9 +271,9 @@ const RootQuery = new GraphQLObjectType({
   fields: {
     category: {
       type: CategoryType,
-      args: { name: { type: GraphQLString } },
+      args: { short_name: { type: GraphQLString } },
       resolve(parent, args) {
-        return db.findCategoryByName(args.name).then((value) => value[0]);
+        return db.findCategoryByName(args.short_name).then((value) => value[0]);
       },
     },
 
@@ -216,10 +287,14 @@ const RootQuery = new GraphQLObjectType({
 
     companys: {
       type: new GraphQLList(CompanyType),
-      args: { categoryid: { type: GraphQLID } },
+      args: { 
+        categoryid: { type: GraphQLID },
+        lat: { type: GraphQLFloat },
+        lon: { type: GraphQLFloat }
+     },
       resolve(parent, args) {
         return db
-          .findAllBusinessByCategory(args.categoryid)
+          .findAllBusinessByCategory(args.categoryid, args.lat, args.lon)
           .then((value) => value[0]);
       },
     },
@@ -253,6 +328,41 @@ const RootQuery = new GraphQLObjectType({
       args: { cid: { type: GraphQLID } },
       resolve(parent, args) {
         return db.findReviewsById(args.cid).then((value) => value[0]);
+      },
+    },
+
+    extReviews: {
+      type: new GraphQLList(ExtReviewsType),
+      args: { cid: { type: GraphQLID } },
+      resolve(parent, args) {
+        return db.findExtReviewsById(args.cid).then((value) => value[0]);
+      },
+    },
+
+    source:{
+      type: ReviewSourceType,
+      args: { rsi: { type: GraphQLID } },
+      resolve(parent, args) {
+        return db
+          .findReviewSourceByRSI(args.rsi)
+          .then((value) => value[0]);
+      },
+
+    },
+
+    review: {
+      type: ReviewsType,
+      args: { rid: { type: GraphQLID } },
+      resolve(parent, args) {
+        return db.findReview(args.rid).then((value) => value[0]);
+      },
+    },
+
+    reply: {
+      type: ReplyType,
+      args: { rid: { type: GraphQLID } },
+      resolve(parent, args) {
+        return db.findReply(args.rid).then((value) => value[0]);
       },
     },
 
@@ -314,6 +424,24 @@ const RootQuery = new GraphQLObjectType({
       },
     },
 
+    allApprovedCompanys: {
+      type: new GraphQLList(CompanyType),
+      args: { 
+        lat: { type: GraphQLFloat },
+        lon: { type: GraphQLFloat }
+      },
+      resolve(parent, args) {
+        return db.findAllApprovedCompanys(args.lat, args.lon).then((value) => value[0]);
+      },
+    },
+
+    allCategories: {
+      type: new GraphQLList(CategoryType),
+      resolve(parent, args) {
+        return db.findAllCategories().then((value) => value[0]);
+      },
+    },
+
     ownerCompany: {
       type: CompanyType,
       args: {
@@ -348,7 +476,8 @@ const Mutation = new GraphQLObjectType({
         address1: { type: GraphQLString },
         address2: { type: GraphQLString },
         city: { type: new GraphQLNonNull(GraphQLString) },
-        state: { type: new GraphQLNonNull(GraphQLString) },
+        lat: { type: new GraphQLNonNull(GraphQLFloat) },
+        lon: { type: new GraphQLNonNull(GraphQLFloat) },
         zip: { type: GraphQLString },
         categoryid: { type: GraphQLID },
         descr: { type: GraphQLString },
@@ -367,7 +496,8 @@ const Mutation = new GraphQLObjectType({
         let address1 = args.address1;
         let address2 = args.address2;
         let city = args.city;
-        let state = args.state;
+        let lat = args.lat;
+        let lon = args.lon;
         let zip = args.zip;
         let categoryid = args.categoryid;
         let descr = args.descr;
@@ -386,7 +516,8 @@ const Mutation = new GraphQLObjectType({
             address1,
             address2,
             city,
-            state,
+            lat,
+            lon,
             zip,
             categoryid,
             descr,
@@ -411,10 +542,8 @@ const Mutation = new GraphQLObjectType({
         lname: { type: GraphQLString },
         address1: { type: GraphQLString },
         address2: { type: GraphQLString },
-        city: { type: new GraphQLNonNull(GraphQLString) },
-        state: { type: new GraphQLNonNull(GraphQLString) },
         zip: { type: GraphQLString },
-        categoryid: { type: GraphQLID },
+        categoryid: { type: new GraphQLNonNull(GraphQLID) },
         descr: { type: GraphQLString },
         website: { type: new GraphQLNonNull(GraphQLString) },
         phone: { type: GraphQLString },
@@ -429,8 +558,6 @@ const Mutation = new GraphQLObjectType({
         let lname = args.lname;
         let address1 = args.address1;
         let address2 = args.address2;
-        let city = args.city;
-        let state = args.state;
         let zip = args.zip;
         let categoryid = args.categoryid;
         let descr = args.descr;
@@ -447,8 +574,6 @@ const Mutation = new GraphQLObjectType({
             lname,
             address1,
             address2,
-            city,
-            state,
             zip,
             categoryid,
             descr,
@@ -458,6 +583,140 @@ const Mutation = new GraphQLObjectType({
             favorite,
             approved
           )
+          .then((value) => value[0]);
+      },
+    },
+
+    updateBusinessHours: {
+      type: HoursType,
+      args: {
+        cid: { type: GraphQLID },
+        monstart: { type: GraphQLString },
+        monend: { type: GraphQLString },
+        tuestart: { type: GraphQLString },
+        tueend: { type: GraphQLString },
+        wedstart: { type: GraphQLString },
+        wedend: { type: GraphQLString },
+        thustart: { type: GraphQLString },
+        thuend: { type: GraphQLString },
+        fristart: { type: GraphQLString },
+        friend: { type: GraphQLString },
+        satstart: { type: GraphQLString },
+        satend: { type: GraphQLString },
+        sunstart: { type: GraphQLString },
+        sunend: { type: GraphQLString },
+      },
+      resolve(parent, args) {
+        let cid= args.cid;
+        let monstart=args.monstart;
+        let monend=args.monend;
+        let tuestart=args.tuestart;
+        let tueend=args.tueend;
+        let wedstart=args.wedstart;
+        let wedend=args.wedend;
+        let thustart=args.thustart;
+        let thuend=args.thuend;
+        let fristart=args.fristart;
+        let friend=args.friend;
+        let satstart=args.satend;
+        let satend=args.satstart;
+        let sunstart=args.sunstart;
+        let sunend=args.sunend;
+        return db
+          .updateBusinessHours(
+            cid,
+            monstart,
+            monend,
+            tuestart,
+            tueend,
+            wedstart,
+            wedend,
+            thustart,
+            thuend,
+            fristart,
+            friend,
+            satstart,
+            satend,
+            sunstart,
+            sunend,
+          )
+          .then((value) => value[0]);
+      },
+    },
+
+    updateCity: {
+      type: CompanyType,
+      args: {
+        cid: { type: new GraphQLNonNull(GraphQLID) },
+        city: { type: new GraphQLNonNull(GraphQLString) },
+        lat: { type: new GraphQLNonNull(GraphQLFloat) },
+        lon: { type: new GraphQLNonNull(GraphQLFloat) },
+      },
+      resolve(parent, args) {
+        let cid= args.cid;
+        let city = args.city;
+        let lat = args.lat;
+        let lon = args.lon;
+        return db
+          .updateCity(
+            cid,
+            city,
+            lat,
+            lon
+          )
+          .then((value) => value[0]);
+      },
+    },
+
+    updateLocation: {
+      type: ReviewerType,
+      args: {
+        loginid: { type: new GraphQLNonNull(GraphQLID) },
+        city: { type: new GraphQLNonNull(GraphQLString) },
+        state: { type: new GraphQLNonNull(GraphQLString) },
+      },
+      resolve(parent, args) {
+        let loginid= args.loginid;
+        let city = args.city;
+        let state = args.state;
+        return db
+          .updateReviewerLocation(
+            loginid,
+            city,
+            state
+          )
+          .then((value) => value[0]);
+      },
+    },
+
+    updateReview: {
+      type: ReviewsType,
+      args: {
+        rid: { type: new GraphQLNonNull(GraphQLID) },
+        active: { type: new GraphQLNonNull(GraphQLInt) }
+      },
+      resolve(parent, args) {
+        let rid = args.rid;
+        let active = args.active;
+
+        return db
+          .updateReview(rid, active)
+          .then((value) => value[0]);
+      },
+    },
+
+    validateAccount: {
+      type: UserType,
+      args: {
+        loginid: { type: new GraphQLNonNull(GraphQLID) },
+        active: { type: new GraphQLNonNull(GraphQLInt) }
+      },
+      resolve(parent, args) {
+        let loginid = args.loginid;
+        let active = args.active;
+
+        return db
+          .validateAccount(loginid, active)
           .then((value) => value[0]);
       },
     },
@@ -485,6 +744,7 @@ const Mutation = new GraphQLObjectType({
           .then((value) => value[0]);
       },
     },
+
 
     addReviewer: {
       type: ReviewerType,
@@ -523,7 +783,6 @@ const Mutation = new GraphQLObjectType({
       },
 
       resolve(parent, args) {
-        console.log(args);
         let cid = args.cid;
         let reviewerid = args.reviewerid;
         let quality = args.quality;
@@ -551,6 +810,28 @@ const Mutation = new GraphQLObjectType({
             fname,
             lname,
             email,
+            active
+          )
+          .then((value) => value[0]);
+      },
+    },
+
+    addReply: {
+      type: ReplyType,
+      args: {
+        rid: { type: new GraphQLNonNull(GraphQLID) },
+        comment: { type: new GraphQLNonNull(GraphQLString) },
+        active: { type: GraphQLInt },
+      },
+
+      resolve(parent, args) {
+        let rid = args.rid;
+        let comment = args.comment;
+        let active = args.active;
+        return db
+          .addReply(
+            rid,
+            comment,
             active
           )
           .then((value) => value[0]);
